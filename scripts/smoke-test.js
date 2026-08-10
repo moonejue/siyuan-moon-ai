@@ -158,7 +158,7 @@ async function run() {
 
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "plugin.json"), "utf8"));
   assert.equal(manifest.name, "siyuan-moon-ai");
-  assert.equal(manifest.version, "1.4.0");
+  assert.equal(manifest.version, "1.4.2");
   assert.ok(fs.statSync(path.join(root, "index.css")).size > 1000);
   assert.ok(fs.existsSync(path.join(root, "assets", "logo.svg")));
 
