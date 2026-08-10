@@ -2,7 +2,7 @@
   "name": "siyuan-moon-ai",
   "author": "moonejue",
   "url": "https://github.com/moonejue/siyuan-moon-ai",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "minAppVersion": "3.0.0",
   "disabledInPublish": true,
   "backends": ["darwin", "windows", "linux", "docker"],
