@@ -65,6 +65,12 @@ A bare origin such as `https://api.example.com` expands to `/v1/chat/completions
 
 ## Changelog
 
+### v1.4.4
+
+- Revalidate the release against the current local source, retaining all v1.4.3 custom-provider fixes and UI changes.
+- Synchronize manifest, documentation, and package versions; verify packaged files against source.
+- If the marketplace still shows an older version, wait for the index refresh and restart SiYuan, or install `package.zip` from the latest Release.
+
 ### v1.4.3
 
 - Fix empty proxy request bodies on SiYuan v3.8.3 by using JSON payload encoding.
