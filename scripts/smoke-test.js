@@ -49,6 +49,13 @@ assert.equal(api.chatCompletionUrl("https://api.deepseek.com"), "https://api.dee
 assert.equal(api.chatCompletionUrl("http://localhost:1234/v1/"), "http://localhost:1234/v1/chat/completions");
 assert.equal(api.chatCompletionUrl("https://example.com/chat/completions"), "https://example.com/chat/completions");
 assert.equal(api.ollamaChatUrl("http://127.0.0.1:11434/"), "http://127.0.0.1:11434/api/chat");
+assert.equal(api.chatCompletionUrl("https://example.com/compatible-mode/v1/"), "https://example.com/compatible-mode/v1/chat/completions");
+assert.equal(api.chatCompletionUrl("https://example.com/api/"), "https://example.com/api/chat/completions");
+assert.equal(api.chatCompletionUrl("https://example.com/v4?region=cn"), "https://example.com/v4/chat/completions?region=cn");
+assert.equal(api.chatCompletionUrl("https://example.com/chat/completions/?version=1"), "https://example.com/chat/completions?version=1");
+assert.equal(api.ollamaChatUrl("http://localhost:11434/api"), "http://localhost:11434/api/chat");
+assert.throws(() => api.chatCompletionUrl("example.com"), /API 地址无效/);
+assert.throws(() => api.chatCompletionUrl("file:///tmp"), /HTTP/);
 assert.equal(api.normalizeAIText("```markdown\n# 标题\n```"), "# 标题");
 assert.ok(api.defaultSettings().commands.length >= 4);
 assert.equal(api.defaultSettings().profiles.length, 1);
@@ -77,6 +84,8 @@ assert.match(plugin.renderCommands(), /自定义提示词/);
 fetchMock = async (url, options) => {
   assert.equal(url, "/api/network/forwardProxy");
   const body = JSON.parse(options.body);
+  assert.equal(body.payloadEncoding, "json", "SiYuan 3.8.3 text encoding drops the request body");
+  assert.ok(Array.isArray(body.payload.messages));
   assert.equal(body.url, "https://api.deepseek.com/v1/chat/completions");
   assert.equal(body.payload.model, "deepseek-chat");
   return {
@@ -115,6 +124,36 @@ async function run() {
   assert.equal(migratedPlugin.getActiveProfile().apiKey, "legacy-key");
   assert.equal(migratedPlugin.getActiveProfile().temperature, 0.6);
 
+  // Provider changes must preserve a custom configuration, including its protocol.
+  const formPlugin = new api.MoonAIPlugin();
+  formPlugin.settings = api.defaultSettings();
+  const values = { provider: "custom", protocol: "ollama", endpoint: "https://gateway.example/api", model: "custom-model", apiKey: " custom-key ", profileName: "自定义", temperature: "0", systemPrompt: "custom prompt" };
+  const fields = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, {
+    value, addEventListener(type, handler) { this[type] = handler; }
+  }]));
+  formPlugin.getView = () => ({ querySelector(selector) {
+    const key = selector.match(/data-setting="([^"]+)"/);
+    return key ? fields[key[1]] || null : null;
+  } });
+  formPlugin.bindSettingsEvents();
+  fields.provider.change({ target: fields.provider });
+  assert.equal(fields.endpoint.value, values.endpoint);
+  assert.equal(fields.model.value, values.model);
+  assert.equal(fields.protocol.value, "ollama");
+  const captured = formPlugin.captureActiveProfileFromView();
+  assert.equal(captured.apiKey, "custom-key");
+  assert.equal(captured.temperature, 0);
+  let stored;
+  formPlugin.saveData = async (_, value) => { stored = JSON.parse(JSON.stringify(value)); };
+  await formPlugin.persistSettings();
+  const restored = new api.MoonAIPlugin();
+  restored.loadData = async () => stored;
+  await restored.loadSettings();
+  assert.equal(restored.getActiveProfile().endpoint, values.endpoint);
+  assert.equal(restored.getActiveProfile().protocol, "ollama");
+  formPlugin.getView = () => ({ querySelector() { return null; } });
+  assert.equal(formPlugin.readProfileFromView().apiKey, "custom-key");
+
   const mentionText = "结合@觉察日记";
   const activeMention = plugin.getActiveMention({ value: mentionText, selectionStart: mentionText.length });
   assert.equal(activeMention.query, "觉察日记");
@@ -135,6 +174,20 @@ async function run() {
     apiKey: "test-key"
   }, [{ role: "user", content: "ping" }]);
   assert.equal(deepseek, "连接成功");
+
+  fetchMock = async (url, options) => {
+    assert.equal(url, "/api/network/forwardProxy");
+    const request = JSON.parse(options.body);
+    assert.equal(request.payloadEncoding, "json");
+    assert.ok(Array.isArray(request.payload.messages));
+    assert.equal(request.url, "https://gateway.example/custom/chat/completions?region=cn");
+    assert.equal(request.payload.model, "my-model");
+    assert.equal(request.payload.temperature, 0);
+    assert.equal(request.payload.stream, false);
+    assert.equal(request.headers.find(item => item.Authorization).Authorization, "Bearer test-key");
+    return { ok: true, async json() { return { code: 0, data: { status: 200, body: JSON.stringify({ choices: [{ message: { content: "自定义连接成功" } }] }) } }; } };
+  };
+  assert.equal(await api.callAI({ provider: "custom", protocol: "openai", endpoint: "https://gateway.example/custom?region=cn", model: "my-model", apiKey: " test-key ", temperature: 0 }, [{ role: "user", content: "ping" }]), "自定义连接成功");
 
   fetchMock = async (url, options) => {
     assert.equal(url, "http://127.0.0.1:11434/api/chat");
@@ -158,7 +211,7 @@ async function run() {
 
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "plugin.json"), "utf8"));
   assert.equal(manifest.name, "siyuan-moon-ai");
-  assert.equal(manifest.version, "1.4.2");
+  assert.equal(manifest.version, "1.4.3");
   assert.ok(fs.statSync(path.join(root, "index.css")).size > 1000);
   assert.ok(fs.existsSync(path.join(root, "assets", "logo.svg")));
 

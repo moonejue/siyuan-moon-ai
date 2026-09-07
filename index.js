@@ -131,21 +131,31 @@ function compactEndpoint(endpoint) {
   return String(endpoint || "").trim().replace(/\/+$/, "");
 }
 
-function chatCompletionUrl(endpoint) {
-  const base = compactEndpoint(endpoint);
-  if (/\/chat\/completions$/i.test(base)) return base;
-  if (/\/v\d+$/i.test(base)) return `${base}/chat/completions`;
-  return `${base}/v1/chat/completions`;
+function completionUrl(endpoint, protocol) {
+  let url;
+  try { url = new URL(String(endpoint || "").trim()); }
+  catch { throw new Error("API 地址无效，请填写完整的 http:// 或 https:// 地址。"); }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("API 地址仅支持 HTTP / HTTPS；请将密钥填写在 API Key 中。");
+  }
+  let path = url.pathname.replace(/\/+$/, "");
+  if (protocol === "ollama") {
+    if (!/\/api\/chat$/i.test(path)) path += /\/api$/i.test(path) ? "/chat" : "/api/chat";
+  } else if (!/\/chat\/completions$/i.test(path)) {
+    // Only a bare origin implies /v1. Custom gateway prefixes are authoritative.
+    path += path ? "/chat/completions" : "/v1/chat/completions";
+  }
+  url.pathname = path;
+  url.hash = "";
+  return url.toString();
 }
 
-function ollamaChatUrl(endpoint) {
-  const base = compactEndpoint(endpoint);
-  return /\/api\/chat$/i.test(base) ? base : `${base}/api/chat`;
-}
+function chatCompletionUrl(endpoint) { return completionUrl(endpoint, "openai"); }
+function ollamaChatUrl(endpoint) { return completionUrl(endpoint, "ollama"); }
 
 function isLocalUrl(url) {
   try {
-    return ["127.0.0.1", "localhost", "::1"].includes(new URL(url).hostname);
+    return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(new URL(url).hostname);
   } catch {
     return false;
   }
@@ -287,7 +297,8 @@ async function proxyJsonFetch(url, options) {
     contentType: "application/json",
     headers: Object.entries(options.headers || {}).map(([key, value]) => ({ [key]: value })),
     payload: options.body || {},
-    payloadEncoding: "text",
+    // SiYuan 3.8.3 skips SetBody in its text branch; JSON forwards the object.
+    payloadEncoding: "json",
     responseEncoding: "text"
   });
   let payload = {};
@@ -341,7 +352,7 @@ async function callAI(settings, messages) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(settings.apiKey ? { Authorization: `Bearer ${settings.apiKey}` } : {})
+      ...(String(settings.apiKey || "").trim() ? { Authorization: `Bearer ${String(settings.apiKey).trim()}` } : {})
     },
     body: {
       model,
@@ -963,7 +974,7 @@ class MoonAIPlugin extends Plugin {
             <option value="openai" ${profile.protocol === "openai" ? "selected" : ""}>OpenAI Compatible</option>
             <option value="ollama" ${profile.protocol === "ollama" ? "selected" : ""}>Ollama Chat</option>
           </select></label>
-          <label class="is-wide"><span>API 地址</span><input data-setting="endpoint" value="${escapeAttr(profile.endpoint)}" placeholder="https://api.example.com/v1"></label>
+          <label class="is-wide"><span>API 地址</span><input data-setting="endpoint" value="${escapeAttr(profile.endpoint)}" placeholder="https://api.example.com/v1"><small class="moon-ai__field-hint">支持域名、接口前缀或完整 /chat/completions 地址；自定义路径会原样保留。</small></label>
           <label><span>模型名称</span><input data-setting="model" value="${escapeAttr(profile.model)}" placeholder="deepseek-chat"></label>
           <label><span>Temperature</span><input data-setting="temperature" type="number" min="0" max="2" step="0.1" value="${escapeAttr(profile.temperature)}"></label>
           <label class="is-wide"><span>API Key（本地模型可留空）</span><input data-setting="apiKey" type="password" autocomplete="off" value="${escapeAttr(profile.apiKey)}" placeholder="sk-..."></label>
@@ -1063,7 +1074,7 @@ class MoonAIPlugin extends Plugin {
     view.querySelector('[data-setting="profile"]')?.addEventListener("change", (event) => this.switchActiveProfile(event.target.value));
     view.querySelector('[data-setting="provider"]')?.addEventListener("change", (event) => {
       const preset = PROVIDERS[event.target.value];
-      if (!preset) return;
+      if (!preset || event.target.value === "custom") return;
       view.querySelector('[data-setting="protocol"]').value = preset.protocol;
       view.querySelector('[data-setting="endpoint"]').value = preset.endpoint;
       view.querySelector('[data-setting="model"]').value = preset.model;
@@ -1389,7 +1400,7 @@ class MoonAIPlugin extends Plugin {
   readProfileFromView() {
     const view = this.getView();
     const current = this.getActiveProfile();
-    if (!view) return current;
+    if (!view?.querySelector('[data-setting="provider"]')) return current;
     return {
       ...current,
       name: view.querySelector('[data-setting="profileName"]')?.value.trim() || current.name || "未命名方案",
